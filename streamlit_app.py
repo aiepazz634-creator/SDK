@@ -8,7 +8,7 @@ import sys
 sys.path.append(str(Path(__file__).parent))
 
 from qx_ir.core import Circuit, Op
-from qx_ir.core import Circuit, Op
+# from qx_ir.core import Circuit, Op
 # from qx_ir.backend import LocalBackend
 # Load hardware configuration
 with open('qxir_v1.json', 'r') as f:
