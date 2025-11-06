@@ -61,7 +61,8 @@ def main():
             st.session_state.num_qubits = num_qubits
             st.session_state.circuit = Circuit(n_qubits=num_qubits)
             st.session_state.gate_history = []
-            st.experimental_rerun()
+            st.rerun()
+            # st.experimental_rerun()
         
         st.subheader("➕ Add Gate")
         
