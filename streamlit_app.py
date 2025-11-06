@@ -113,12 +113,14 @@ def main():
         if st.button("🔄 Reset Circuit"):
             st.session_state.circuit = Circuit(n_qubits=num_qubits)
             st.session_state.gate_history = []
-            st.experimental_rerun()
+            st.rerun()
+            # st.experimental_rerun()
             
         if st.button("❌ Clear All"):
             st.session_state.circuit = None
             st.session_state.gate_history = []
-            st.experimental_rerun()
+            st.rerun()
+            # st.experimental_rerun()
     
     # Main content area
     col1, col2 = st.columns([2, 1])
@@ -166,7 +168,8 @@ def add_gate(gate_type, qubits):
     # Add gate to circuit
     st.session_state.circuit.add_op(Op(gate_type, qubits))
     st.session_state.gate_history.append((gate_type, qubits))
-    st.experimental_rerun()
+    st.rerun()
+    # st.experimental_rerun()
 
 def display_circuit(gate_history, num_qubits):
     """Display the circuit using Streamlit"""
