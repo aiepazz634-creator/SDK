@@ -1,7 +1,8 @@
 README.md
 setup.py
+examples/__init__.py
+examples/quantum_teleportation.py
 qx_ir/__init__.py
-qx_ir/backend.py
 qx_ir/batch_processor.py
 qx_ir/core.py
 qx_ir/estimator.py
@@ -20,9 +21,8 @@ qx_ir.egg-info/entry_points.txt
 qx_ir.egg-info/requires.txt
 qx_ir.egg-info/top_level.txt
 qx_ir/backend/__init__.py
-qx_ir/backend/emulator.py
-qx_ir/backend/noise_models.py
-qx_ir/backend/profile.py
+qx_ir/backend/backend.py
+qx_ir/backend/storage.py
 qx_ir/cli/__init__.py
 qx_ir/cli/main.py
 tests/test_ir.py
