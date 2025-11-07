@@ -1,15 +1,16 @@
 import streamlit as st
 import json
 import os
+import matplotlib.pyplot as plt
+import numpy as np
 from pathlib import Path
+from qx_ir import Circuit, Op, CircuitDrawer, Program
+from qx_ir.simulator import StatevectorSimulator
+from qx_ir.backend import LocalBackend
 
 # Add parent directory to path to import the required modules
 import sys
 sys.path.append(str(Path(__file__).parent))
-
-from qx_ir.core import Circuit, Op
-# from qx_ir.core import Circuit, Op
-# from qx_ir.backend import LocalBackend
 # Load hardware configuration
 with open('qxir_v1.json', 'r') as f:
     HARDWARE_CONFIG = json.load(f)
@@ -29,20 +30,108 @@ GATE_DISPLAY = {
     'id': 'I'
 }
 
+def create_bell_circuit():
+    """Create a Bell state circuit."""
+    circuit = Circuit(n_qubits=2)
+    circuit.add_op(Op('h', qubits=[0]))
+    circuit.add_op(Op('cx', qubits=[0, 1]))
+    return circuit
+
+def create_qft_circuit(n_qubits=3):
+    """Create a Quantum Fourier Transform circuit."""
+    circuit = Circuit(n_qubits=n_qubits)
+    
+    for i in range(n_qubits):
+        circuit.add_op(Op('h', qubits=[i]))
+        for j in range(i + 1, n_qubits):
+            angle = 2 * 3.14159 / (2 ** (j - i + 1))
+            circuit.add_op(Op('cp', qubits=[j, i], params=[angle]))
+    
+    for i in range(n_qubits // 2):
+        circuit.add_op(Op('swap', qubits=[i, n_qubits - 1 - i]))
+    
+    return circuit
+
+def run_circuit_simulation(circuit, shots=1000):
+    """Run a circuit simulation and return results."""
+    simulator = StatevectorSimulator()
+    program = Program(circuits=[circuit], config={'shots': shots})
+    results = simulator.run(program)
+    return results
+
+def add_gate(gate_type, qubits):
+    """Add a gate to the circuit"""
+    if 'circuit' not in st.session_state:
+        st.session_state.circuit = Circuit(n_qubits=max(qubits)+1 if isinstance(qubits, (list, tuple)) else qubits+1)
+        st.session_state.gate_history = []
+    
+    # Handle both single and multi-qubit gates
+    if isinstance(qubits, (list, tuple)):
+        if gate_type in ['cx', 'cz'] and len(qubits) >= 2:
+            st.session_state.circuit.add_op(Op(gate_type, qubits=qubits[:2]))
+        else:
+            st.session_state.circuit.add_op(Op(gate_type, qubits=[qubits[0]]))
+    else:
+        st.session_state.circuit.add_op(Op(gate_type, qubits=[qubits]))
+    
+    st.session_state.gate_history.append((gate_type, qubits if isinstance(qubits, (list, tuple)) else [qubits]))
+
+def display_circuit(gate_history, num_qubits):
+    """Display the circuit with error handling"""
+    if not gate_history:
+        st.info("No gates added yet. Use the sidebar to add gates to your circuit.")
+        return
+        
+    try:
+        circuit = Circuit(n_qubits=num_qubits)
+        for gate_type, qubits in gate_history:
+            if not qubits:  # Skip if no qubits specified
+                continue
+                
+            if gate_type in ['cx', 'cz'] and len(qubits) >= 2:
+                circuit.add_op(Op(gate_type, qubits=qubits[:2]))
+            else:
+                circuit.add_op(Op(gate_type, qubits=[qubits[0]] if isinstance(qubits, (list, tuple)) else [qubits]))
+        
+        # Create and display the circuit visualization
+        with st.container():
+            fig = CircuitDrawer.draw_mpl(circuit, show=False)
+            if fig:
+                st.pyplot(fig, clear_figure=True)
+                plt.close(fig)  # Close the figure to prevent text output
+            else:
+                st.warning("Could not display circuit")
+        
+    except Exception as e:
+        st.error(f"Error displaying circuit: {str(e)}")
+        st.exception(e)
+
+def generate_code(gate_history, num_qubits):
+    """Generate code for the circuit"""
+    code = "import qx_ir\n\ncircuit = qx_ir.Circuit(n_qubits={})\n".format(num_qubits)
+    for gate_type, qubits in gate_history:
+        if gate_type in ['cx', 'cz']:
+            code += "circuit.add_op(qx_ir.Op('{}', qubits={}))\n".format(gate_type, qubits)
+        else:
+            code += "circuit.add_op(qx_ir.Op('{}', qubits=[{}]))\n".format(gate_type, qubits[0])
+    
+    return code
+
 def main():
     st.set_page_config(
         page_title="Quantum Circuit Builder",
         page_icon="⚛️",
-        layout="wide"
+        layout="wide",
+        initial_sidebar_state="expanded"
     )
-    
-    st.title("⚛️ Quantum Circuit Builder")
     
     # Initialize session state
     if 'circuit' not in st.session_state:
-        st.session_state.circuit = None
+        st.session_state.circuit = Circuit(n_qubits=2)
         st.session_state.gate_history = []
         st.session_state.num_qubits = 2
+        st.session_state.simulation_results = None
+        st.session_state.show_demo = False
     
     # Sidebar for circuit configuration
     with st.sidebar:
@@ -158,155 +247,98 @@ def main():
             file_name="quantum_circuit.py",
             mime="text/plain"
         )
-
-def add_gate(gate_type, qubits):
-    """Add a gate to the circuit"""
-    if 'circuit' not in st.session_state:
-        st.session_state.circuit = Circuit(n_qubits=max(qubits)+1)
-        st.session_state.gate_history = []
-    
-    # Add gate to circuit
-    st.session_state.circuit.add_op(Op(gate_type, qubits))
-    st.session_state.gate_history.append((gate_type, qubits))
-    st.rerun()
-    # st.experimental_rerun()
-
-def display_circuit(gate_history, num_qubits):
-    """Display the circuit using Streamlit"""
-    if not gate_history:
-        st.info("No gates added yet. Use the sidebar to add gates to your circuit.")
-        return
-    
-    # Create a container for the circuit
-    circuit_container = st.container()
-    
-    # Calculate the number of columns needed (1 for qubit labels + 1 for each gate)
-    num_columns = len(gate_history) + 1
-    
-    # Create columns for the circuit
-    cols = circuit_container.columns([1] + [2] * len(gate_history))
-    
-    # Draw qubit lines and labels
-    for q in range(num_qubits):
-        with cols[0]:
-            st.markdown(f"**q[{q}]** ───", unsafe_allow_html=True)
-    
-    # Draw gates
-    for i, (gate, qubits) in enumerate(gate_history, 1):
-        with cols[i]:
-            for q in range(num_qubits):
-                if q in qubits:
-                    if gate in GATE_DISPLAY:
-                        display_char = GATE_DISPLAY[gate]
-                    else:
-                        display_char = gate.upper()
-                    
-                    # Special handling for CNOT and CZ gates
-                    if gate in ['cx', 'cz']:
-                        if q == qubits[0]:  # Control qubit
-                            st.markdown(f"───<span style='font-size: 24px;'>●</span>───", unsafe_allow_html=True)
-                        else:  # Target qubit
-                            if gate == 'cx':
-                                st.markdown("─┳─<span style='font-size: 24px;'>⊕</span>─┳─", unsafe_allow_html=True)
-                            else:  # cz
-                                st.markdown("─┳─<span style='font-size: 24px;'>Z</span>─┳─", unsafe_allow_html=True)
-                    else:
-                        st.markdown(f"───<span style='font-size: 20px;'>{display_char}</span>───", unsafe_allow_html=True)
-                else:
-                    # Draw wire continuation
-                    if i > 1 and any(q in g[1] for g in gate_history[i-1:i+1] if g[0] in ['cx', 'cz']):
-                        st.markdown("───│───", unsafe_allow_html=True)
-                    else:
-                        st.markdown("───────", unsafe_allow_html=True)
-
-def generate_code(gate_history, num_qubits):
-    """Generate the Python code for the circuit"""
-    if not gate_history:
-        return "# No gates added yet. Use the sidebar to add gates to your circuit."
-    
-    code = [
-        "from qx_ir.core import Circuit, Op\n\n",
-        f"# Create a quantum circuit with {num_qubits} qubits",
-        f"circuit = Circuit(n_qubits={num_qubits})\n"
-    ]
-    
-    for i, (gate, qubits) in enumerate(gate_history, 1):
-        if len(qubits) == 1:
-            code.append(f"# Add {gate.upper()} gate on qubit {qubits[0]}")
-            code.append(f"circuit.add_op(Op('{gate}', [{qubits[0]}]))")
-        else:
-            code.append(f"# Add {gate.upper()} gate with control {qubits[0]} and target {qubits[1]}")
-            code.append(f"circuit.add_op(Op('{gate}', {qubits}))")
-    
-    code.append("\n# Run the circuit on a backend")
-    code.append("# from qx_ir.backend import LocalBackend")
-    code.append("# backend = LocalBackend()")
-    code.append("# job = backend.submit(circuit)")
-    code.append("# result = job.result()")
-    code.append("# print(result)")
-    
-    return "\n".join(code)
-
-def run_simulation(circuit):
-    """Run the circuit simulation"""
-    try:
-        from qx_ir.backend import LocalBackend
         
-        backend = LocalBackend()
-        job = backend.submit(circuit)
+        # Demo circuits section
+        st.header("🎯 Demo Circuits")
+        demo_option = st.selectbox(
+            "Choose a demo circuit:",
+            ["Select a demo", "Bell State", "Quantum Fourier Transform (3-qubit)"]
+        )
         
-        # Show job status
-        with st.spinner(f"Job {job.job_id} is running..."):
-            while job.status() not in ['DONE', 'FAILED', 'CANCELLED']:
-                time.sleep(0.5)
-        
-        if job.status() == 'DONE':
-            result = job.result()
-            st.success("✅ Simulation completed successfully!")
+        if demo_option == "Bell State":
+            st.info("Creating a Bell state (entangled pair) between two qubits.")
+            circuit = create_bell_circuit()
             
-            # Display results in an expandable section
-            with st.expander("📊 View Results"):
-                st.json(result)
-                
-                # If there are measurement results, show them in a bar chart
-                if 'result' in result and isinstance(result['result'], dict):
-                    import plotly.express as px
-                    
-                    # Convert counts to DataFrame for visualization
-                    counts = result['result']
-                    df = pd.DataFrame({
-                        'State': list(counts.keys()),
-                        'Count': list(counts.values())
-                    })
-                    
-                    # Create bar chart
-                    fig = px.bar(
-                        df,
-                        x='State',
-                        y='Count',
-                        title='Measurement Results',
-                        color='State',
-                        color_discrete_sequence=px.colors.qualitative.Plotly
-                    )
-                    
-                    # Update layout
-                    fig.update_layout(
-                        xaxis_title="Quantum State",
-                        yaxis_title="Count",
-                        showlegend=False
-                    )
-                    
-                    # Show the plot
-                    st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.error(f"❌ Simulation failed with status: {job.status()}")
+            # Display circuit
+            st.subheader("Bell State Circuit")
+            fig = CircuitDrawer.draw_mpl(circuit, show=False)
+            if fig:
+                st.pyplot(fig)
+            else:
+                st.warning("Could not display Bell State circuit")
             
-    except Exception as e:
-        st.error(f"❌ Error running simulation: {str(e)}")
+            # Run simulation and show results
+            if st.button("Run Bell State Simulation"):
+                with st.spinner("Running Bell state simulation..."):
+                    results = run_circuit_simulation(circuit)
+                    
+                    # Display results
+                    st.subheader("Measurement Results")
+                    fig = CircuitDrawer.plot_results(
+                        counts=results,
+                        title="Bell State Measurement Results",
+                        xlabel="Quantum State",
+                        ylabel="Counts",
+                        color='#4b6cb7',
+                        show=False
+                    )
+                    if fig:
+                        st.pyplot(fig)
+                    else:
+                        st.warning("Could not display measurement results")
+        
+        elif demo_option == "Quantum Fourier Transform (3-qubit)":
+            st.info("3-qubit Quantum Fourier Transform circuit.")
+            circuit = create_qft_circuit(3)
+            
+            # Prepare input state |100>
+            input_circuit = Circuit(n_qubits=3)
+            input_circuit.add_op(Op('x', qubits=[0]))
+            
+            # Combine input and QFT circuits
+            full_circuit = Circuit(n_qubits=3)
+            for op in input_circuit.instructions + circuit.instructions:
+                full_circuit.add_op(op)
+            
+            # Display circuit
+            st.subheader("QFT Circuit (with |100> input)")
+            fig = CircuitDrawer.draw_mpl(full_circuit, show=False)
+            if fig:
+                st.pyplot(fig)
+            else:
+                st.warning("Could not display QFT circuit")
+            
+            # Run simulation and show results
+            if st.button("Run QFT Simulation"):
+                with st.spinner("Running QFT simulation..."):
+                    results = run_circuit_simulation(full_circuit)
+                    
+                    # Display results
+                    st.subheader("QFT Measurement Results")
+                    fig = CircuitDrawer.plot_results(
+                        counts=results,
+                        title="3-Qubit QFT Measurement Results (Input: |100>)",
+                        xlabel="Quantum State",
+                        ylabel="Counts",
+                        color='#8e44ad',
+                        show=False
+                    )
+                    if fig:
+                        st.pyplot(fig)
+                    else:
+                        st.warning("Could not display QFT measurement results")
+
 
 if __name__ == "__main__":
     # Import these here to avoid circular imports
     import pandas as pd
     import time
     
-    main()
+    # Suppress DeltaGenerator output
+    import sys
+    from contextlib import redirect_stdout
+    from io import StringIO
+    
+    # Redirect stdout to suppress DeltaGenerator debug output
+    with redirect_stdout(StringIO()):
+        main()
