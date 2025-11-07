@@ -215,25 +215,7 @@ def main():
     col1, col2 = st.columns([2, 1])
     
     with col1:
-        st.header("🎛️ Circuit Visualization")
-        
-        # Initialize circuit if needed
-        if st.session_state.circuit is None:
-            st.session_state.circuit = Circuit(n_qubits=num_qubits)
-        
-        # Display the circuit
         display_circuit(st.session_state.gate_history, st.session_state.num_qubits)
-        
-        # Add some space
-        st.markdown("\n\n")
-        
-        # Run simulation button
-        # if st.button("▶️ Run Simulation"):
-        #     if not st.session_state.gate_history:
-        #         st.warning("Please add some gates to the circuit first!")
-        #     else:
-        #         with st.spinner("Running simulation..."):
-        #             run_simulation(st.session_state.circuit)
     
     with col2:
         st.header("📜 Generated Code")
@@ -247,51 +229,69 @@ def main():
             file_name="quantum_circuit.py",
             mime="text/plain"
         )
+    
+    # # Run simulation button below the circuit
+    # if st.button("▶️ Run Simulation", type="primary", use_container_width=True):
+    #     if not st.session_state.gate_history:
+    #         st.warning("Please add some gates to the circuit first!")
+    #     else:
+    #         run_simulation(st.session_state.circuit)
+    
+    # Demo circuits section below everything
+    # st.markdown("---")
+    # st.header("🎯 Demo Circuits")
+    demo_option = st.selectbox(
+        "Choose a demo circuit:",
+        ["Select a demo", "Bell State", "Quantum Fourier Transform (3-qubit)"]
+    )
+    
+    # Demo circuit display and simulation - Single column layout
+    if demo_option == "Bell State":
+        st.info("Creating a Bell state (entangled pair) between two qubits.")
         
-        # Demo circuits section
-        st.header("🎯 Demo Circuits")
-        demo_option = st.selectbox(
-            "Choose a demo circuit:",
-            ["Select a demo", "Bell State", "Quantum Fourier Transform (3-qubit)"]
-        )
+        # Create two columns for circuit and results side by side
+        col1, col2 = st.columns(2)
         
-        if demo_option == "Bell State":
-            st.info("Creating a Bell state (entangled pair) between two qubits.")
-            circuit = create_bell_circuit()
-            
-            # Display circuit
+        with col1:
             st.subheader("Bell State Circuit")
+            circuit = create_bell_circuit()
             fig = CircuitDrawer.draw_mpl(circuit, show=False)
             if fig:
-                st.pyplot(fig)
-            else:
-                st.warning("Could not display Bell State circuit")
+                st.pyplot(fig, clear_figure=True)
+                plt.close(fig)
             
-            # Run simulation and show results
             if st.button("Run Bell State Simulation"):
                 with st.spinner("Running Bell state simulation..."):
                     results = run_circuit_simulation(circuit)
-                    
-                    # Display results
-                    st.subheader("Measurement Results")
-                    fig = CircuitDrawer.plot_results(
-                        counts=results,
-                        title="Bell State Measurement Results",
-                        xlabel="Quantum State",
-                        ylabel="Counts",
-                        color='#4b6cb7',
-                        show=False
-                    )
-                    if fig:
-                        st.pyplot(fig)
-                    else:
-                        st.warning("Could not display measurement results")
+                    st.session_state.bell_results = results
         
-        elif demo_option == "Quantum Fourier Transform (3-qubit)":
-            st.info("3-qubit Quantum Fourier Transform circuit.")
-            circuit = create_qft_circuit(3)
+        # Show results if available
+        if 'bell_results' in st.session_state and st.session_state.bell_results is not None:
+            with col2:
+                st.subheader("Measurement Results")
+                fig = CircuitDrawer.plot_results(
+                    counts=st.session_state.bell_results,
+                    title="Bell State Measurement Results",
+                    xlabel="Quantum State",
+                    ylabel="Counts",
+                    color='#4b6cb7',
+                    show=False
+                )
+                if fig:
+                    st.pyplot(fig, clear_figure=True)
+                    plt.close(fig)
+    
+    elif demo_option == "Quantum Fourier Transform (3-qubit)":
+        st.info("3-qubit Quantum Fourier Transform circuit.")
+        
+        # Create two columns for circuit and results side by side
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.subheader("QFT Circuit (with |100> input)")
             
-            # Prepare input state |100>
+            # Prepare QFT circuit with input state |100>
+            circuit = create_qft_circuit(3)
             input_circuit = Circuit(n_qubits=3)
             input_circuit.add_op(Op('x', qubits=[0]))
             
@@ -301,32 +301,31 @@ def main():
                 full_circuit.add_op(op)
             
             # Display circuit
-            st.subheader("QFT Circuit (with |100> input)")
             fig = CircuitDrawer.draw_mpl(full_circuit, show=False)
             if fig:
-                st.pyplot(fig)
-            else:
-                st.warning("Could not display QFT circuit")
+                st.pyplot(fig, clear_figure=True)
+                plt.close(fig)
             
-            # Run simulation and show results
             if st.button("Run QFT Simulation"):
                 with st.spinner("Running QFT simulation..."):
                     results = run_circuit_simulation(full_circuit)
-                    
-                    # Display results
-                    st.subheader("QFT Measurement Results")
-                    fig = CircuitDrawer.plot_results(
-                        counts=results,
-                        title="3-Qubit QFT Measurement Results (Input: |100>)",
-                        xlabel="Quantum State",
-                        ylabel="Counts",
-                        color='#8e44ad',
-                        show=False
-                    )
-                    if fig:
-                        st.pyplot(fig)
-                    else:
-                        st.warning("Could not display QFT measurement results")
+                    st.session_state.qft_results = results
+        
+        # Show results if available
+        if 'qft_results' in st.session_state and st.session_state.qft_results is not None:
+            with col2:
+                st.subheader("QFT Measurement Results")
+                fig = CircuitDrawer.plot_results(
+                    counts=st.session_state.qft_results,
+                    title="3-Qubit QFT Measurement Results",
+                    xlabel="Quantum State",
+                    ylabel="Counts",
+                    color='#8e44ad',
+                    show=False
+                )
+                if fig:
+                    st.pyplot(fig, clear_figure=True)
+                    plt.close(fig)
 
 
 if __name__ == "__main__":
