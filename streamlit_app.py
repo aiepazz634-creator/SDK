@@ -177,14 +177,30 @@ def create_qft_circuit(n_qubits=3):
     
     return circuit
 
-def run_circuit_simulation(circuit, shots=1000):
-    """Run a circuit simulation using the quantum device and return results."""
-    result = quantum_device.execute(circuit, shots=shots)
-    if result['status'] == 'success':
-        return result['results']
-    else:
-        st.error(f"Error in simulation: {result.get('error', 'Unknown error')}")
-        return {}
+def run_circuit_simulation(circuit, shots=None):
+    """Run a circuit simulation using the quantum device and return results.
+    
+    Args:
+        circuit: The quantum circuit to execute
+        shots: Number of shots to run. If None, uses the default from hardware config.
+    """
+    try:
+        # Get max_shots from hardware config, default to 1024 if not found
+        max_shots = HARDWARE_CONFIG.get('max_shots', 1024)
+        
+        # If shots is not provided, use max_shots
+        if shots is None:
+            shots = max_shots
+        else:
+            # Ensure shots doesn't exceed max_shots
+            shots = min(shots, max_shots)
+            
+        st.info(f"Running simulation with {shots} shots (max allowed: {max_shots})")
+        
+        return quantum_device.execute(circuit, shots=shots)
+    except Exception as e:
+        st.error(f"Error in simulation: {str(e)}")
+        return None
 
 def add_gate(gate_type, qubits):
     """Add a gate to the circuit"""
@@ -377,18 +393,36 @@ def main():
         # Add a divider
         st.markdown("---")
         
-        # Add circuit controls
-        if st.button("🔄 Reset Circuit"):
-            st.session_state.circuit = Circuit(n_qubits=num_qubits)
-            st.session_state.gate_history = []
-            st.rerun()
-            # st.experimental_rerun()
+        # Add shots configuration
+        max_shots = HARDWARE_CONFIG.get('max_shots', 8192)
+        default_shots = min(1024, max_shots)  # Default to 1024 or max_shots, whichever is smaller
+        
+        if 'shots' not in st.session_state:
+            st.session_state.shots = default_shots
             
-        if st.button("❌ Clear All"):
-            st.session_state.circuit = None
-            st.session_state.gate_history = []
-            st.rerun()
-            # st.experimental_rerun()
+        shots = st.number_input(
+            "Number of Shots",
+            min_value=1,
+            max_value=max_shots,
+            value=st.session_state.get('shots', default_shots),
+            help=f"Number of times to run the circuit (max {max_shots} based on hardware)",
+            key="shots_input"
+        )
+        st.session_state.shots = min(shots, max_shots)  # Ensure it doesn't exceed max_shots
+        
+        # Add circuit controls
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Reset Circuit", use_container_width=True):
+                st.session_state.circuit = Circuit(n_qubits=num_qubits)
+                st.session_state.gate_history = []
+                st.rerun()
+        
+        with col2:
+            if st.button("❌ Clear All", use_container_width=True):
+                st.session_state.circuit = None
+                st.session_state.gate_history = []
+                st.rerun()
     
     # Main content area
     col1, col2 = st.columns([2, 1])
@@ -409,11 +443,16 @@ def main():
             mime="text/plain"
         )
     
-    # # Run simulation button below the circuit
+    # Run simulation button below the circuit
     # if st.button("▶️ Run Simulation", type="primary", use_container_width=True):
     #     if not st.session_state.gate_history:
     #         st.warning("Please add some gates to the circuit first!")
     #     else:
+    #         with st.spinner("Running simulation..."):
+    #             st.session_state.simulation_results = run_circuit_simulation(
+    #                 st.session_state.circuit,
+    #                 shots=st.session_state.get('shots', 1024)  # Use the selected number of shots
+    #             )
     #         run_simulation(st.session_state.circuit)
     
     # Demo circuits section below everything
@@ -448,17 +487,29 @@ def main():
         if 'bell_results' in st.session_state and st.session_state.bell_results is not None:
             with col2:
                 st.subheader("Measurement Results")
-                fig = CircuitDrawer.plot_results(
-                    counts=st.session_state.bell_results,
-                    title="Bell State Measurement Results",
-                    xlabel="Quantum State",
-                    ylabel="Counts",
-                    color='#4b6cb7',
-                    show=False
-                )
-                if fig:
-                    st.pyplot(fig, clear_figure=True)
-                    plt.close(fig)
+                # Extract counts from results if it's a dictionary with a 'results' key
+                results = st.session_state.bell_results
+                counts = results.get('results', results)  # Try to get 'results' key, fallback to the full results
+                
+                # Ensure counts is a dictionary with string keys and numeric values
+                if isinstance(counts, dict):
+                    # Convert any non-string keys to strings
+                    counts = {str(k): int(v) for k, v in counts.items()}
+                    
+                    fig = CircuitDrawer.plot_results(
+                        counts=counts,
+                        title="Bell State Measurement Results",
+                        xlabel="Quantum State",
+                        ylabel="Counts",
+                        color='#4b6cb7',
+                        show=False
+                    )
+                    if fig:
+                        st.pyplot(fig, clear_figure=True)
+                        plt.close(fig)
+                else:
+                    st.error("Invalid results format. Expected a dictionary of counts.")
+                    st.json(results)  # Show the actual results for debugging
     
     elif demo_option == "Quantum Fourier Transform (3-qubit)":
         st.info("3-qubit Quantum Fourier Transform circuit.")
@@ -494,17 +545,29 @@ def main():
         if 'qft_results' in st.session_state and st.session_state.qft_results is not None:
             with col2:
                 st.subheader("QFT Measurement Results")
-                fig = CircuitDrawer.plot_results(
-                    counts=st.session_state.qft_results,
-                    title="3-Qubit QFT Measurement Results",
-                    xlabel="Quantum State",
-                    ylabel="Counts",
-                    color='#8e44ad',
-                    show=False
-                )
-                if fig:
-                    st.pyplot(fig, clear_figure=True)
-                    plt.close(fig)
+                # Extract counts from results if it's a dictionary with a 'results' key
+                results = st.session_state.qft_results
+                counts = results.get('results', results)  # Try to get 'results' key, fallback to the full results
+                
+                # Ensure counts is a dictionary with string keys and numeric values
+                if isinstance(counts, dict):
+                    # Convert any non-string keys to strings
+                    counts = {str(k): int(v) for k, v in counts.items()}
+                    
+                    fig = CircuitDrawer.plot_results(
+                        counts=counts,
+                        title="3-Qubit QFT Measurement Results",
+                        xlabel="Quantum State",
+                        ylabel="Counts",
+                        color='#8e44ad',
+                        show=False
+                    )
+                    if fig:
+                        st.pyplot(fig, clear_figure=True)
+                        plt.close(fig)
+                else:
+                    st.error("Invalid results format. Expected a dictionary of counts.")
+                    st.json(results)  # Show the actual results for debugging
 
 
 if __name__ == "__main__":
