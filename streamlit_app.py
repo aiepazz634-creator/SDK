@@ -3,10 +3,135 @@ import json
 import os
 import matplotlib.pyplot as plt
 import numpy as np
+import time
 from pathlib import Path
 from qx_ir import Circuit, Op, CircuitDrawer, Program
 from qx_ir.simulator import StatevectorSimulator
 from qx_ir.backend import LocalBackend
+
+
+class QuantumDevice:
+    """
+    A quantum device that can execute quantum circuits and return results.
+    """
+    
+    def __init__(self, backend: str = 'local'):
+        """
+        Initialize the quantum device with the specified backend.
+        
+        Args:
+            backend: The backend to use for execution. Currently only 'local' is supported.
+        """
+        self.backend_type = backend
+        self.backend = LocalBackend()
+        self.last_execution_time = None
+        self.last_circuit = None
+        
+    def execute(self, circuit: Circuit, shots: int = 1024) -> dict:
+        """
+        Execute a quantum circuit and return the results.
+        
+        Args:
+            circuit: The quantum circuit to execute
+            shots: Number of shots to run the circuit for (not used in local backend)
+            
+        Returns:
+            Dictionary containing the execution results
+        """
+        start_time = time.time()
+        self.last_circuit = circuit
+        
+        try:
+            # Create a Program with the circuit
+            program = Program(circuits=[circuit])
+            
+            # Submit the job to the backend
+            job = self.backend.submit(program)
+            
+            # Add debug output
+            st.write("Job submitted. Waiting for completion...")
+            
+            # Get the status as a string for comparison
+            def get_status_str():
+                status = str(job.status)
+                # Handle both JobStatus.DONE and 'DONE' formats
+                if '.' in status:
+                    return status.split('.')[-1]
+                return status
+            
+            # Wait for the job to complete with a timeout
+            max_retries = 30  # 3 seconds max wait (30 * 0.1s)
+            retry_count = 0
+            
+            while retry_count < max_retries:
+                status = get_status_str()
+                st.write(f"Current job status: {status}")
+                
+                if status in ['DONE', 'COMPLETED', 'FINISHED', 'SUCCESS']:
+                    break
+                elif status in ['FAILED', 'ERROR', 'CANCELLED']:
+                    return {
+                        'status': 'error',
+                        'error': f"Job failed with status: {status}",
+                        'job_id': getattr(job, 'job_id', None)
+                    }
+                
+                time.sleep(0.1)  # Small delay to prevent busy waiting
+                retry_count += 1
+            
+            final_status = get_status_str()
+            
+            # Get the results if the job completed successfully
+            if final_status in ['DONE', 'COMPLETED', 'FINISHED', 'SUCCESS']:
+                results = job.result()
+                # The result should contain 'counts' or 'result' with the measurement results
+                counts = results.get('counts', results.get('result', {}))
+                self.last_execution_time = time.time() - start_time
+                return {
+                    'status': 'success',
+                    'results': counts,
+                    'execution_time': self.last_execution_time,
+                    'job_id': getattr(job, 'job_id', None)
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'error': f"Job failed with status: {job.status()}",
+                    'job_id': job.job_id if hasattr(job, 'job_id') else None
+                }
+                
+        except Exception as e:
+            return {
+                'status': 'error',
+                'error': str(e),
+                'job_id': None
+            }
+    
+    def get_statevector(self, circuit: Circuit = None) -> np.ndarray:
+        """
+        Get the statevector of a circuit.
+        
+        Args:
+            circuit: The circuit to get the statevector for. If None, uses the last executed circuit.
+            
+        Returns:
+            The statevector as a numpy array
+        """
+        circuit = circuit or self.last_circuit
+        if circuit is None:
+            raise ValueError("No circuit provided and no previous circuit executed")
+            
+        # For local simulation, we can get the statevector directly
+        if hasattr(self.backend, 'get_statevector'):
+            return self.backend.get_statevector(circuit)
+        else:
+            # Fallback: Simulate and compute statevector
+            simulator = StatevectorSimulator()
+            return simulator.compute_statevector(circuit)
+
+
+# Global quantum device instance
+quantum_device = QuantumDevice()
 
 # Add parent directory to path to import the required modules
 import sys
@@ -53,11 +178,13 @@ def create_qft_circuit(n_qubits=3):
     return circuit
 
 def run_circuit_simulation(circuit, shots=1000):
-    """Run a circuit simulation and return results."""
-    simulator = StatevectorSimulator()
-    program = Program(circuits=[circuit], config={'shots': shots})
-    results = simulator.run(program)
-    return results
+    """Run a circuit simulation using the quantum device and return results."""
+    result = quantum_device.execute(circuit, shots=shots)
+    if result['status'] == 'success':
+        return result['results']
+    else:
+        st.error(f"Error in simulation: {result.get('error', 'Unknown error')}")
+        return {}
 
 def add_gate(gate_type, qubits):
     """Add a gate to the circuit"""
@@ -119,11 +246,19 @@ def generate_code(gate_history, num_qubits):
 
 def main():
     st.set_page_config(
-        page_title="Quantum Circuit Builder",
+        page_title="ZenaQuantum - Quantum Circuit Builder",
         page_icon="⚛️",
         layout="wide",
         initial_sidebar_state="expanded"
     )
+    
+    # Add your name and title at the top of the page
+    st.markdown("""
+    <h1 style='text-align: center; color: #1f77b4;'>
+        ZenaQuantum - Quantum Circuit Simulator
+    </h1>
+    <hr style='height: 2px; background-color: #1f77b4; border: none;'>
+    """, unsafe_allow_html=True)
     
     # Initialize session state
     if 'circuit' not in st.session_state:
@@ -155,11 +290,55 @@ def main():
         
         st.subheader("➕ Add Gate")
         
-        # Gate selection
-        gate_type = st.selectbox("Select Gate", AVAILABLE_GATES, key="gate_select")
+        # Get gate information from the hardware config
+        basis_gates = HARDWARE_CONFIG.get('basis_gates', [])
+        gate_fidelities = HARDWARE_CONFIG.get('gate_fidelities', {})
         
-        # For multi-qubit gates, show appropriate controls
-        if gate_type in ['cx', 'cz']:
+        # Create a mapping of gate names to their display symbols
+        GATE_DISPLAY = {
+            'id': 'I',
+            'rz': 'Rz',
+            'sx': '√X',
+            'x': 'X',
+            'cx': '●',
+            'h': 'H',
+            't': 'T',
+            'tdg': 'T†'
+        }
+        
+        # Create a list of gate options with their display names and fidelities
+        gate_options = []
+        for gate in basis_gates:
+            fidelity = gate_fidelities.get(gate, 0.0) * 100
+            display_name = f"{GATE_DISPLAY.get(gate, gate)} ({gate})"
+            gate_options.append((gate, display_name, fidelity))
+        
+        # Sort gates by type (single-qubit first, then multi-qubit) and then by name
+        def get_gate_order(gate_info):
+            gate = gate_info[0]
+            if gate in ['cx', 'cz']:  # Multi-qubit gates
+                return (1, gate)
+            return (0, gate)  # Single-qubit gates
+            
+        gate_options.sort(key=get_gate_order)
+        
+        # Show gate selection dropdown with formatted names
+        selected_gate_display = st.selectbox(
+            "Select Gate",
+            [opt[1] for opt in gate_options],
+            key="gate_select"
+        )
+        
+        # Get the actual gate name from the display name
+        gate_type = next(opt[0] for opt in gate_options if opt[1] == selected_gate_display)
+        
+        # Show gate fidelity if available
+        gate_fidelity = next((opt[2] for opt in gate_options if opt[0] == gate_type), None)
+        if gate_fidelity is not None:
+            st.caption(f"Fidelity: {gate_fidelity:.1f}%")
+        
+        # Show appropriate controls based on gate type
+        if gate_type in ['cx']:  # Multi-qubit gates
             col1, col2 = st.columns(2)
             with col1:
                 control_qubit = st.number_input(
@@ -183,7 +362,7 @@ def main():
                     st.error("Control and target qubits must be different")
                 else:
                     add_gate(gate_type, [control_qubit, target_qubit])
-        else:
+        else:  # Single-qubit gates
             qubit = st.number_input(
                 "Qubit",
                 min_value=0,
